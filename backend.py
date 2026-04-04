@@ -15,7 +15,14 @@ class Graph:
         # Adjacency matrix initialised to 0 (no edge)
         self.adjacency_matrix = [[0] * num_nodes for _ in range(num_nodes)]
         self.node_names = [f"Node {i}" for i in range(num_nodes)]
+        self.node_floors = [0] * num_nodes
         self.blocked_edges: set[tuple[int, int]] = set()
+
+    def set_node_floor(self, floor: int, node: int):
+        self.node_floors[node] = floor
+
+    def get_node_floor(self, node: int) -> int:
+        return self.node_floors[node]
 
     def add_edge(self, u: int, v: int, wt: int):
         self.adjacency_matrix[u][v] = wt
@@ -61,6 +68,7 @@ class PathResult:
     def __init__(self):
         self.distance = INT_MAX
         self.path: list[int] = []
+        self.destination_node = -1
 
     def found(self) -> bool:
         return self.distance != INT_MAX and len(self.path) > 0
@@ -68,8 +76,8 @@ class PathResult:
 
 class PathFinder:
     @staticmethod
-    def find_shortest_path(graph: Graph, source: int, destination: int) -> PathResult:
-        """Dijkstra's algorithm — direct port of PathFinder.cpp."""
+    def find_shortest_path(graph: Graph, source: int, destinations: list[int]) -> PathResult:
+        """Dijkstra's algorithm — direct port of PathFinder.cpp, updated for multiple destinations."""
         vertices = graph.get_number_of_nodes()
         distance = [INT_MAX] * vertices
         parent = [-1] * vertices
@@ -79,9 +87,12 @@ class PathFinder:
         distance[source] = 0
         heapq.heappush(pq, (0, source))
 
+        best_dest = -1
+
         while pq:
             d, u = heapq.heappop(pq)
-            if u == destination:
+            if u in destinations:
+                best_dest = u
                 break
             if d > distance[u]:
                 continue
@@ -95,13 +106,15 @@ class PathFinder:
                     heapq.heappush(pq, (distance[i], i))
 
         result = PathResult()
-        result.distance = distance[destination]
+        
+        if best_dest == -1:
+            return result  # no path to any destination
 
-        if distance[destination] == INT_MAX:
-            return result  # no path
+        result.distance = distance[best_dest]
+        result.destination_node = best_dest
 
         # Reconstruct path
-        current = destination
+        current = best_dest
         while current != -1:
             result.path.append(current)
             current = parent[current]
@@ -119,7 +132,12 @@ def parse_input_file(content: str) -> Graph:
     graph = Graph(num_nodes)
 
     for i in range(num_nodes):
-        graph.set_node_name(lines[idx], i); idx += 1
+        parts = lines[idx].split("|")
+        name = parts[0].strip()
+        floor = int(parts[1].strip()) if len(parts) > 1 else 0
+        graph.set_node_name(name, i)
+        graph.set_node_floor(floor, i)
+        idx += 1
 
     num_edges = int(lines[idx]); idx += 1
     original_weights: dict[tuple[int, int], int] = {}
@@ -130,29 +148,41 @@ def parse_input_file(content: str) -> Graph:
         graph.add_edge(u, v, w)
         original_weights[(min(u, v), max(u, v))] = w
 
-    src_dst = lines[idx].split()
-    source, destination = int(src_dst[0]), int(src_dst[1])
+    source = int(lines[idx]); idx += 1
+    destinations = [int(x) for x in lines[idx].split()]
 
-    return graph, source, destination, original_weights
+    return graph, source, destinations, original_weights
 
 
 def build_default_graph() -> tuple:
     """Returns the sample building from input.txt."""
-    content = """6
-Lobby
-Hallway A
-Hallway B
-Lab
-Server Room
-EXIT
-8
-0 1 2
-0 2 10
-1 2 5
-1 3 3
-2 4 1
-3 4 8
-3 5 6
+    content = """11
+Lobby | 0
+Hallway A | 0
+Main Exit | 0
+Stairs A (Flr 0) | 0
+Stairs A (Flr 1) | 1
+Hallway B | 1
+Lab | 1
+Stairs B (Flr 1) | 1
+Stairs B (Flr 2) | 2
+Server Room | 2
+Roof Exit | 2
+12
+0 1 5
+1 2 10
+0 3 2
+3 4 5
 4 5 4
-0 5"""
+5 6 3
+5 7 2
+7 8 5
+8 9 4
+9 10 3
+6 10 8
+2 3 15
+0
+2 10"""
     return parse_input_file(content)
+
+

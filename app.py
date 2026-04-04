@@ -1,4 +1,5 @@
 
+import copy
 import streamlit as st
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -68,7 +69,7 @@ if "graph" not in st.session_state:
     g, src, dst, ow = build_default_graph()
     st.session_state.graph           = g
     st.session_state.source          = src
-    st.session_state.destination     = dst
+    st.session_state.destinations    = dst
     st.session_state.original_weights = ow
     st.session_state.blocked_edges   = []   # list of (u,v) currently blocked
     st.session_state.fire_nodes      = []   
@@ -105,7 +106,17 @@ def draw_graph(graph: Graph, normal_result, emergency_result, blocked_edges, fir
     for u, v, w, is_blk in all_edges_raw:
         G.add_edge(u, v, weight=w, blocked=is_blk)
 
-    pos = nx.spring_layout(G, seed=42, k=2.5)
+    pos = {}
+    floor_nodes = {}
+    for i in range(n):
+        f = graph.get_node_floor(i)
+        if f not in floor_nodes: floor_nodes[f] = []
+        floor_nodes[f].append(i)
+
+    for floor_level, nodes in floor_nodes.items():
+        x_spacing = 2.0 / (len(nodes) + 1)
+        for idx, node in enumerate(nodes):
+            pos[node] = ((idx + 1) * x_spacing - 1.0, float(floor_level) * 1.5)
 
     fig, ax = plt.subplots(figsize=(9, 6))
     fig.patch.set_facecolor("#0d0d1a")
@@ -156,13 +167,13 @@ def draw_graph(graph: Graph, normal_result, emergency_result, blocked_edges, fir
 
   
     src = st.session_state.source
-    dst = st.session_state.destination
+    destinations = st.session_state.destinations
     node_colors = []
     node_sizes  = []
     for i in range(n):
         if i == src:
             node_colors.append("#22c55e"); node_sizes.append(900)
-        elif i == dst:
+        elif i in destinations:
             node_colors.append("#a855f7"); node_sizes.append(900)
         elif i in fire_nodes:
             node_colors.append("#ef4444"); node_sizes.append(800)
@@ -198,12 +209,13 @@ def draw_graph(graph: Graph, normal_result, emergency_result, blocked_edges, fir
 def render_path(result, graph: Graph, label: str, is_emergency: bool):
     css_class = "emergency" if is_emergency else "normal"
     if not result.found():
-        st.markdown(f'<div class="path-banner blocked">⚠️ {label} — No path found! Building may be fully blocked.</div>',
+        st.markdown(f'<div class="path-banner blocked">⚠️ {label} — No path found to any exit! Building may be fully blocked.</div>',
                     unsafe_allow_html=True)
         return
 
+    exit_name = graph.get_node_name(result.destination_node)
     arrow_path = " → ".join(graph.get_node_name(n) for n in result.path)
-    st.markdown(f'<div class="path-banner {css_class}">{"🔥" if is_emergency else "🗺️"} {label}: {arrow_path}</div>',
+    st.markdown(f'<div class="path-banner {css_class}">{"🔥" if is_emergency else "🗺️"} {label} (Target: {exit_name}): {arrow_path}</div>',
                 unsafe_allow_html=True)
 
     st.markdown(f"**Total distance: `{result.distance}` units**")
@@ -235,7 +247,7 @@ with st.sidebar:
             g, src, dst, ow = parse_input_file(content)
             st.session_state.graph            = g
             st.session_state.source           = src
-            st.session_state.destination      = dst
+            st.session_state.destinations     = dst
             st.session_state.original_weights = ow
             st.session_state.blocked_edges    = []
             st.session_state.fire_nodes       = []
@@ -250,7 +262,7 @@ with st.sidebar:
         g, src, dst, ow = build_default_graph()
         st.session_state.graph            = g
         st.session_state.source           = src
-        st.session_state.destination      = dst
+        st.session_state.destinations     = dst
         st.session_state.original_weights = ow
         st.session_state.blocked_edges    = []
         st.session_state.fire_nodes       = []
@@ -264,8 +276,27 @@ with st.sidebar:
     st.markdown("### 🏢 Building Info")
     st.markdown(f"- **Nodes:** {n}")
     st.markdown(f"- **Edges:** {len(graph.get_all_edges())}")
-    st.markdown(f"- **Source:** {graph.get_node_name(st.session_state.source)}")
-    st.markdown(f"- **Exit:** {graph.get_node_name(st.session_state.destination)}")
+    exit_names = ', '.join(graph.get_node_name(d) for d in st.session_state.destinations)
+    st.markdown(f"- **Exits:** {exit_names}")
+
+    st.divider()
+    st.markdown("### 📍 Current Location")
+    source_options = {graph.get_node_name(i): i for i in range(n)}
+    current_source_name = graph.get_node_name(st.session_state.source)
+    try:
+        source_idx = list(source_options.keys()).index(current_source_name)
+    except ValueError:
+        source_idx = 0
+        
+    selected_source_name = st.selectbox(
+        "Select Starting Point", 
+        options=list(source_options.keys()), 
+        index=source_idx
+    )
+    
+    if source_options[selected_source_name] != st.session_state.source:
+        st.session_state.source = source_options[selected_source_name]
+        st.rerun()
 
     st.divider()
     st.markdown("### 🔥 Active Blockages")
@@ -293,22 +324,30 @@ graph = st.session_state.graph
 n     = graph.get_number_of_nodes()
 names = [graph.get_node_name(i) for i in range(n)]
 
-#  Normal path 
+# ---- NORMAL PATH (always unblocked graph) ----
+normal_graph = copy.deepcopy(graph)
+
+# Remove all blockages for normal scenario
+for (u, v) in st.session_state.blocked_edges:
+    wt = st.session_state.original_weights.get((min(u, v), max(u, v)), 1)
+    normal_graph.unblock_corridor(u, v, wt)
+
 normal_result = PathFinder.find_shortest_path(
-    graph,
+    normal_graph,
     st.session_state.source,
-    st.session_state.destination
+    st.session_state.destinations
 )
 
-#  Emergency path 
+# ---- EMERGENCY PATH (with blockages applied) ----
 emergency_result = None
 if st.session_state.blocked_edges:
-    emergency_result = PathFinder.find_shortest_path(
-        graph,
-        st.session_state.source,
-        st.session_state.destination
-    )
+    emergency_graph = copy.deepcopy(graph)
 
+    emergency_result = PathFinder.find_shortest_path(
+        emergency_graph,
+        st.session_state.source,
+        st.session_state.destinations
+    )
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     val_cls = "safe" if normal_result.found() else "danger"
