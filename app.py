@@ -427,18 +427,20 @@ with st.sidebar:
     st.markdown("### 📂 Upload Building Map")
     uploaded = st.file_uploader("Upload input.txt", type=["txt"])
     if uploaded:
-        try:
-            content = uploaded.read().decode("utf-8")
-            g, src, dst, ow = parse_input_file(content)
-            st.session_state.graph            = g
-            st.session_state.source           = src
-            st.session_state.destinations     = dst
-            st.session_state.original_weights = ow
-            st.session_state.blocked_edges    = []
-            st.session_state.fire_nodes       = []
-            st.success("✅ Building map loaded!")
-        except Exception as e:
-            st.error(f"❌ Failed to parse file: {e}")
+        # Check if this is a newly uploaded file
+        if st.session_state.get("last_uploaded_file_id") != uploaded.file_id:
+            try:
+                content = uploaded.getvalue().decode("utf-8")
+                g, src, dst, ow = parse_input_file(content)
+                st.session_state.graph            = g
+                st.session_state.source           = src
+                st.session_state.destinations     = dst
+                st.session_state.original_weights = ow
+                st.session_state.blocked_edges    = []
+                st.session_state.fire_nodes       = []
+                st.session_state.last_uploaded_file_id = uploaded.file_id
+            except Exception as e:
+                st.error(f"❌ Failed to parse file: {e}")
 
     st.divider()
 
